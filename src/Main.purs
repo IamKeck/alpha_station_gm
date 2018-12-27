@@ -120,7 +120,6 @@ main = do
         documentP = D.toParentNode doc
         documentN = D.toNode doc
         init = {childList : true, characterData: true, attributes: true}
-      scriptNode <- addTweetWidget doc body
       mayTop <- querySelector (QuerySelector "#noa-container") documentP
       case mayTop of
         Nothing -> log "no-container" *> pure unit
@@ -146,6 +145,7 @@ main = do
                             >>= toArray
                         _ <- traverse (appendTd doc) trs
                         modify_ (const true) flag
+                        _ <- addTweetWidget doc body
                         pure unit
                   false ->
                     pure unit
