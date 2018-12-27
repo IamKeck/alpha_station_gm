@@ -9,7 +9,6 @@ import Data.Traversable (traverse)
 import Debug.Trace (traceM)
 import Effect (Effect)
 import Effect.Class (liftEffect)
-import Effect.Console (log)
 import Effect.Ref (modify_, new, read, write)
 import Prim.Row (class Union)
 import Web.DOM.Document (createElement, Document, createTextNode)
@@ -44,7 +43,6 @@ searchInput = QuerySelector "input[name='q']"
 
 appendTd :: Document -> Node -> Effect Unit
 appendTd d tr = runMayDomUnit do
-  _ <- liftEffect $ log ("appendtd!!!!!!")
   trElm <- MaybeT $ pure $ fromNode tr
   trElmParent <- pure $ toParentNode trElm
   titleElem <- MaybeT $ querySelector (QuerySelector "td:nth-child(1)") trElmParent
@@ -62,7 +60,6 @@ createTweet title artist = "♪Now Listening \n" <> title <> " / " <> artist <> 
 
 appendTdHead :: Document -> Node ->Effect Unit
 appendTdHead d tr = do
-  log ("appendtdhead!!!!!!")
   tdNode <- toNode <$> createElement "th" d
   _ <- createTextNode "Tweet!" d >>= T.toNode >>> (_ `appendChild` tdNode)
   appendChild tdNode tr *> pure unit
@@ -73,7 +70,6 @@ runMutationObserver ::
   forall r rx. Union r rx MutationObserverInitFields => {|r} -> Node -> (MutationObserverRet -> Effect Unit) -> Effect Unit
 runMutationObserver init node cb = do
   observer <- mutationObserver \r o -> do
-    log "in changed!!!"
     cb {record : r, observer : o}
   observe node init observer
 
@@ -102,7 +98,6 @@ createTweetButton t d = do
 
 main :: Effect Unit
 main = do
-  log "script first"
   mb <- window >>= document >>= HD.body
   case HE.toElement <$> mb of
     Nothing -> pure unit
@@ -114,14 +109,13 @@ main = do
         init = {childList : true}
       mayTop <- querySelector (QuerySelector "#noa-container") documentP
       case mayTop of
-        Nothing -> log "no-container" *> pure unit
+        Nothing -> pure unit
         Just top -> do
           let topNode = toNode top
           let topParentNode = toParentNode top
           flag <- new true
           loadScript <- new false
           runMutationObserver init topNode \obsRet -> do
-              liftEffect $ log "next of aff"
               liftEffect do
                 traceM (obsRet.record)
                 flagVal <- read flag
