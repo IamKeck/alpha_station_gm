@@ -2,13 +2,11 @@ module Main where
 
 import Prelude
 
+import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
 import Data.Either (Either(..))
-import Data.Foldable (length)
-import Data.List.NonEmpty (elemLastIndex)
 import Data.Maybe (Maybe(..))
-import Data.Traversable (for)
-import Data.Traversable (sequence, traverse)
-import Debug.Trace (trace, traceM)
+import Data.Traversable (traverse)
+import Debug.Trace (traceM)
 import Effect (Effect)
 import Effect.Aff (Aff, makeAff, launchAff)
 import Effect.Class (liftEffect)
@@ -20,41 +18,42 @@ import Web.DOM.Document (toNode, toParentNode) as D
 import Web.DOM.Element (Element, fromNode, setAttribute, toNode, toParentNode)
 import Web.DOM.MutationObserver (MutationObserver, MutationObserverInitFields, mutationObserver, observe)
 import Web.DOM.MutationRecord (MutationRecord)
-import Web.DOM.Node (Node, appendChild, parentNode, textContent)
+import Web.DOM.Node (Node, appendChild, textContent, toEventTarget)
 import Web.DOM.NodeList (toArray)
 import Web.DOM.ParentNode (QuerySelector(..), querySelector, querySelectorAll)
 import Web.DOM.Text (toNode) as T
+import Web.Event.Event (Event, EventType(..))
+import Web.Event.EventTarget (addEventListener, eventListener)
 import Web.HTML (window)
-import Web.HTML.Event.EventTypes (offline)
 import Web.HTML.HTMLDocument (body, toDocument) as HD
 import Web.HTML.HTMLElement (toElement) as HE
 import Web.HTML.Window (document)
+
+type MayDom a = MaybeT Effect a
+
+runMayDom :: forall a. MaybeT Effect a -> Effect (Maybe a)
+runMayDom  = runMaybeT 
+
+runMayDomUnit :: MaybeT Effect Unit -> Effect Unit
+runMayDomUnit  = runMaybeT >>> (pure unit <* _)
 
 searchInput :: QuerySelector
 searchInput = QuerySelector "input[name='q']"
 
 appendTd :: Document -> Node -> Effect Unit
-appendTd d tr = do
-  log ("appendtd!!!!!!")
-  let trElm = fromNode tr
-  case toParentNode <$> trElm of
-    Nothing -> pure unit
-    Just trParent -> do
-      titleElemM <- querySelector (QuerySelector "td:nth-child(1)") trParent
-      artistElemM <- querySelector (QuerySelector "td:nth-child(2)") trParent
-      case titleElemM of
-        Nothing -> pure unit
-        Just titleElem ->
-          case artistElemM of
-            Nothing -> pure unit
-            Just artistElem -> do
-              artist <- textContent $ toNode artistElem
-              title <- textContent $ toNode titleElem
-              tdNode <- toNode <$> createElement "td" d
-              let tweet = createTweet title artist
-              _ <- createTweetButton tweet d >>= (_ `appendChild` tdNode) 
-              _ <- appendChild tdNode tr
-              pure unit
+appendTd d tr = runMayDomUnit do
+  _ <- liftEffect $ log ("appendtd!!!!!!")
+  trElm <- MaybeT $ pure $ fromNode tr
+  trElmParent <- pure $ toParentNode trElm
+  titleElem <- MaybeT $ querySelector (QuerySelector "td:nth-child(1)") trElmParent
+  artistElem <- MaybeT $ querySelector (QuerySelector "td:nth-child(2)") trElmParent
+  artist <- liftEffect $ textContent $ toNode artistElem
+  title <- liftEffect $ textContent $ toNode titleElem
+  tdNode <- liftEffect $ toNode <$> createElement "td" d
+  let tweet = createTweet title artist
+  _ <- liftEffect $ createTweetButton tweet d >>= (_ `appendChild` tdNode) 
+  _ <- liftEffect $ appendChild tdNode tr
+  pure unit
 
 createTweet :: String -> String -> String
 createTweet title artist = "♪Now Listening \n" <> title <> " / " <> artist <> "\n"
@@ -70,21 +69,22 @@ type MutationObserberAffRet = {record :: MutationRecord, observer :: MutationObs
 
 mutationObserverAff :: 
   forall r rx. Union r rx MutationObserverInitFields => {|r} -> Node -> Aff MutationObserberAffRet
-mutationObserverAff init node = makeAff $ \resulter -> do
+mutationObserverAff init node = makeAff $ \next -> do
   log ("changed!!!!!!")
-  let callback = \r o -> {record : r, observer : o} # Right >>> resulter
+  let callback = \r o -> {record : r, observer : o} # Right >>> next
   observer <- mutationObserver callback
   observe node init observer
   pure mempty
 
-addTweetWidget :: Document -> Element -> Effect Unit
+addTweetWidget :: Document -> Element -> Effect Node
 addTweetWidget d body = do
   traceM body
   elm <- createElement "script" d
   setAttribute "src" "https://platform.twitter.com/widgets.js" elm
   setAttribute "charset" "utf-8" elm
-  -- setAttribute "async" "async" elm
-  appendChild (toNode elm) (toNode body) *> pure unit
+  setAttribute "async" "async" elm
+  _ <- appendChild (toNode elm) (toNode body)
+  pure (toNode elm)
 
 createTweetButton :: String -> Document -> Effect Node
 createTweetButton t d = do
@@ -98,7 +98,16 @@ createTweetButton t d = do
   textNode <- T.toNode <$> createTextNode "Tweet!" d 
   let elmNode = toNode elm
   appendChild textNode elmNode *> pure elmNode
-  
+
+onAff :: Node -> String -> Aff Event
+onAff n evt = makeAff \next -> do 
+  listner <- eventListener \e -> next $ Right e
+  addEventListener eventType listner true eventTarget
+  pure mempty
+  where
+    eventType = EventType evt
+    eventTarget = toEventTarget n
+
 main :: Effect Unit
 main = do
   log "script first"
@@ -111,7 +120,7 @@ main = do
         documentP = D.toParentNode doc
         documentN = D.toNode doc
         init = {childList : true, characterData: true, attributes: true}
-      addTweetWidget doc body
+      scriptNode <- addTweetWidget doc body
       mayTop <- querySelector (QuerySelector "#noa-container") documentP
       case mayTop of
         Nothing -> log "no-container" *> pure unit
@@ -121,27 +130,23 @@ main = do
           flag <- new true
           _ <- launchAff $ do
               obsRet <- mutationObserverAff init topNode
-              traceM (obsRet.record)
-              flagVal <- liftEffect $ read flag
-              case flagVal of
-                true -> do
-                  liftEffect $ modify_ (const false) flag
-                  headTr <- liftEffect $ querySelector (QuerySelector "thead tr") topParentNode
-                  case headTr of
-                    Nothing -> (liftEffect $ modify_ (const true) flag) *> pure unit
-                    Just tr -> do 
-                      liftEffect $ appendTdHead doc (toNode tr)
-                      trsn <- liftEffect (querySelectorAll (QuerySelector "tbody tr") topParentNode)
-                      trs <- (liftEffect $ toArray trsn)  :: Aff (Array Node)
-                      traceM trs
-                      a <- for trs (\tr2 -> do
-                        traceM tr2
-                        liftEffect $ appendTd doc tr2
+              liftEffect do
+                traceM (obsRet.record)
+                flagVal <- read flag
+                case flagVal of
+                  true -> do
+                    modify_ (const false) flag
+                    headTr <- querySelector (QuerySelector "thead tr") topParentNode
+                    case headTr of
+                      Nothing -> modify_ (const true) flag *> pure unit
+                      Just tr -> do 
+                        appendTdHead doc (toNode tr)
+                        trs <- 
+                          querySelectorAll (QuerySelector "tbody tr") topParentNode 
+                            >>= toArray
+                        _ <- traverse (appendTd doc) trs
+                        modify_ (const true) flag
                         pure unit
-                      )
-                      liftEffect $ modify_ (const true) flag
-                      pure unit
-                      
-                false ->
-                  pure unit
+                  false ->
+                    pure unit
           pure unit
