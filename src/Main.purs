@@ -45,9 +45,9 @@ appendTd :: Document -> Node -> Effect Unit
 appendTd d tr = runMayDomUnit do
   trElm <- MaybeT $ pure $ fromNode tr
   trElmParent <- pure $ toParentNode trElm
-  titleElem <- MaybeT $ querySelector (QuerySelector "td:nth-child(1)") trElmParent
-  artistElem <- MaybeT $ querySelector (QuerySelector "td:nth-child(2)") trElmParent
   artist <- liftEffect $ textContent $ toNode artistElem
+  titleElem <- MaybeT $ querySelector (QuerySelector "td:nth-child(2)") trElmParent
+  artistElem <- MaybeT $ querySelector (QuerySelector "td:nth-child(3)") trElmParent
   title <- liftEffect $ textContent $ toNode titleElem
   tdNode <- liftEffect $ toNode <$> createElement "td" d
   let tweet = createTweet title artist
