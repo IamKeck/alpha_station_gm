@@ -3,33 +3,35 @@ module Main where
 import Prelude
 
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
-import Data.Either (Either(..))
+import Data.Function.Uncurried (Fn1, runFn1)
 import Data.Maybe (Maybe(..))
 import Data.Traversable (traverse)
 import Debug.Trace (traceM)
 import Effect (Effect)
-import Effect.Aff (Aff, makeAff, launchAff)
 import Effect.Class (liftEffect)
 import Effect.Console (log)
-import Effect.Ref (new, read, modify_)
+import Effect.Ref (modify_, new, read, write)
 import Prim.Row (class Union)
 import Web.DOM.Document (createElement, Document, createTextNode)
 import Web.DOM.Document (toNode, toParentNode) as D
 import Web.DOM.Element (Element, fromNode, setAttribute, toNode, toParentNode)
 import Web.DOM.MutationObserver (MutationObserver, MutationObserverInitFields, mutationObserver, observe)
 import Web.DOM.MutationRecord (MutationRecord)
-import Web.DOM.Node (Node, appendChild, textContent, toEventTarget)
+import Web.DOM.Node (Node, appendChild, textContent)
 import Web.DOM.NodeList (toArray)
 import Web.DOM.ParentNode (QuerySelector(..), querySelector, querySelectorAll)
 import Web.DOM.Text (toNode) as T
-import Web.Event.Event (Event, EventType(..))
-import Web.Event.EventTarget (addEventListener, eventListener)
 import Web.HTML (window)
 import Web.HTML.HTMLDocument (body, toDocument) as HD
 import Web.HTML.HTMLElement (toElement) as HE
 import Web.HTML.Window (document)
+foreign import loadTwitterImpl :: Fn1 Unit (Effect Unit)
+
+loadTwitter :: Effect Unit
+loadTwitter = runFn1 loadTwitterImpl unit
 
 type MayDom a = MaybeT Effect a
+
 
 runMayDom :: forall a. MaybeT Effect a -> Effect (Maybe a)
 runMayDom  = runMaybeT 
@@ -65,18 +67,17 @@ appendTdHead d tr = do
   _ <- createTextNode "Tweet!" d >>= T.toNode >>> (_ `appendChild` tdNode)
   appendChild tdNode tr *> pure unit
 
-type MutationObserberAffRet = {record :: MutationRecord, observer :: MutationObserver}
+type MutationObserverRet = {record :: MutationRecord, observer :: MutationObserver}
 
-mutationObserverAff :: 
-  forall r rx. Union r rx MutationObserverInitFields => {|r} -> Node -> Aff MutationObserberAffRet
-mutationObserverAff init node = makeAff $ \next -> do
-  log ("changed!!!!!!")
-  let callback = \r o -> {record : r, observer : o} # Right >>> next
-  observer <- mutationObserver callback
+runMutationObserver :: 
+  forall r rx. Union r rx MutationObserverInitFields => {|r} -> Node -> (MutationObserverRet -> Effect Unit) -> Effect Unit
+runMutationObserver init node cb = do
+  observer <- mutationObserver \r o -> do
+    log "in changed!!!"
+    cb {record : r, observer : o}
   observe node init observer
-  pure mempty
 
-addTweetWidget :: Document -> Element -> Effect Node
+addTweetWidget :: Document -> Element -> Effect Element
 addTweetWidget d body = do
   traceM body
   elm <- createElement "script" d
@@ -84,7 +85,7 @@ addTweetWidget d body = do
   setAttribute "charset" "utf-8" elm
   setAttribute "async" "async" elm
   _ <- appendChild (toNode elm) (toNode body)
-  pure (toNode elm)
+  pure elm
 
 createTweetButton :: String -> Document -> Effect Node
 createTweetButton t d = do
@@ -99,15 +100,6 @@ createTweetButton t d = do
   let elmNode = toNode elm
   appendChild textNode elmNode *> pure elmNode
 
-onAff :: Node -> String -> Aff Event
-onAff n evt = makeAff \next -> do 
-  listner <- eventListener \e -> next $ Right e
-  addEventListener eventType listner true eventTarget
-  pure mempty
-  where
-    eventType = EventType evt
-    eventTarget = toEventTarget n
-
 main :: Effect Unit
 main = do
   log "script first"
@@ -119,7 +111,7 @@ main = do
       let
         documentP = D.toParentNode doc
         documentN = D.toNode doc
-        init = {childList : true, characterData: true, attributes: true}
+        init = {childList : true}
       mayTop <- querySelector (QuerySelector "#noa-container") documentP
       case mayTop of
         Nothing -> log "no-container" *> pure unit
@@ -127,8 +119,9 @@ main = do
           let topNode = toNode top
           let topParentNode = toParentNode top
           flag <- new true
-          _ <- launchAff $ do
-              obsRet <- mutationObserverAff init topNode
+          loadScript <- new false
+          runMutationObserver init topNode \obsRet -> do
+              liftEffect $ log "next of aff"
               liftEffect do
                 traceM (obsRet.record)
                 flagVal <- read flag
@@ -137,15 +130,21 @@ main = do
                     modify_ (const false) flag
                     headTr <- querySelector (QuerySelector "thead tr") topParentNode
                     case headTr of
-                      Nothing -> modify_ (const true) flag *> pure unit
+                      Nothing -> write true flag *> pure unit
                       Just tr -> do 
                         appendTdHead doc (toNode tr)
                         trs <- 
                           querySelectorAll (QuerySelector "tbody tr") topParentNode 
                             >>= toArray
                         _ <- traverse (appendTd doc) trs
-                        modify_ (const true) flag
-                        _ <- addTweetWidget doc body
+                        write true flag
+                        loads <- read loadScript
+                        case loads of
+                          true ->
+                            loadTwitter
+                          false -> do
+                            _ <- addTweetWidget doc body
+                            write true loadScript
                         pure unit
                   false ->
                     pure unit
