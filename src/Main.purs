@@ -5,6 +5,7 @@ import Prelude
 import Control.Monad.Maybe.Trans (MaybeT(..), runMaybeT)
 import Data.Function.Uncurried (Fn1, runFn1)
 import Data.Maybe (Maybe(..))
+import Data.String (trim)
 import Data.Traversable (traverse)
 import Debug.Trace (traceM)
 import Effect (Effect)
@@ -45,9 +46,9 @@ appendTd :: Document -> Node -> Effect Unit
 appendTd d tr = runMayDomUnit do
   trElm <- MaybeT $ pure $ fromNode tr
   trElmParent <- pure $ toParentNode trElm
-  artist <- liftEffect $ textContent $ toNode artistElem
   titleElem <- MaybeT $ querySelector (QuerySelector "td:nth-child(2)") trElmParent
   artistElem <- MaybeT $ querySelector (QuerySelector "td:nth-child(3)") trElmParent
+  artist <- liftEffect <<< map trim <<< textContent <<< toNode $ artistElem
   title <- liftEffect $ textContent $ toNode titleElem
   tdNode <- liftEffect $ toNode <$> createElement "td" d
   let tweet = createTweet title artist
