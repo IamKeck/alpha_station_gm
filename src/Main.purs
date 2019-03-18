@@ -7,7 +7,6 @@ import Data.Function.Uncurried (Fn1, runFn1)
 import Data.Maybe (Maybe(..))
 import Data.String (trim)
 import Data.Traversable (traverse)
-import Debug.Trace (traceM)
 import Effect (Effect)
 import Effect.Class (liftEffect)
 import Effect.Ref (modify_, new, read, write)
@@ -43,10 +42,8 @@ changeTableCss :: Document -> Effect Unit
 changeTableCss doc = runMayDomUnit do
   let documentP = D.toParentNode doc
   table <- MaybeT $ querySelector (QuerySelector ".table_style02") documentP
-  traceM table
   liftEffect $ setAttribute "style" "table-layout: fixed;" table
   titleTh <- MaybeT $ querySelector (QuerySelector "th.title") documentP
-  traceM titleTh
   liftEffect $ setAttribute "style" "width: 32%;" titleTh
   pure unit
   
@@ -96,7 +93,6 @@ runMutationObserver init node cb = do
 
 addTweetWidget :: Document -> Element -> Effect Element
 addTweetWidget d body = do
-  traceM body
   elm <- createElement "script" d
   setAttribute "src" "https://platform.twitter.com/widgets.js" elm
   setAttribute "charset" "utf-8" elm
@@ -139,7 +135,6 @@ main = do
           flag <- new true
           loadScript <- new false
           runMutationObserver init topNode \obsRet -> do
-              traceM (obsRet.record)
               flagVal <- read flag
               case flagVal of
                 true -> do
